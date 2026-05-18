@@ -365,8 +365,10 @@ async function pollSubCompositionTimelines(
     }
     return true;
   })()`;
+  const beforePoll = Date.now();
   const ready = await pollPageExpression(page, expression, timeoutMs, intervalMs);
-  if (ready) {
+  const pollDurationMs = Date.now() - beforePoll;
+  if (ready && pollDurationMs > intervalMs * 2) {
     await page.evaluate(`(function() {
       if (typeof window.__hfForceTimelineRebind === "function") {
         window.__hfForceTimelineRebind();
