@@ -584,6 +584,7 @@ describe("resolveRenderWorkerCount", () => {
     );
 
     expect(workers).toBe(1);
+    expect(log.warn).toHaveBeenCalledOnce();
   });
 
   it("overrides explicit --workers when html-in-canvas is detected", () => {

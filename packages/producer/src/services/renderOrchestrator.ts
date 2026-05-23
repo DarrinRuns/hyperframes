@@ -1699,7 +1699,10 @@ export async function executeRenderJob(
         }
       | undefined;
 
-    if (job.config.workers === undefined && totalFrames >= 60) {
+    const htmlInCanvasDetected = compiled.renderModeHints.reasons.some(
+      (r) => r.code === "htmlInCanvas",
+    );
+    if (job.config.workers === undefined && totalFrames >= 60 && !htmlInCanvasDetected) {
       const outcome = await runCaptureCalibration({
         cfg,
         fileServer,

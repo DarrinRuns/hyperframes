@@ -114,14 +114,17 @@ export function resolveRenderWorkerCount(
   log: ProducerLogger = defaultLogger,
   measuredCaptureCost?: CaptureCostEstimate,
 ): number {
+  // TODO(htmlInCanvas): workaround — Chrome's experimental drawElementImage
+  // API (CanvasDrawElement) is non-deterministic across concurrent browser
+  // instances due to paint-cache races and SwiftShader contention.
+  // Remove this clamp once Chromium stabilizes CanvasDrawElement for
+  // concurrent use.
   const reasonCodes = new Set(compiled.renderModeHints.reasons.map((r) => r.code));
   if (reasonCodes.has("htmlInCanvas")) {
-    if (requestedWorkers !== undefined && requestedWorkers > 1) {
-      log.warn(
-        "[Render] html-in-canvas (drawElementImage) detected — overriding --workers to 1. " +
-          "Chrome does not support concurrent drawElementImage across multiple workers and produces flickering artifacts.",
-      );
-    }
+    log.warn(
+      "[Render] html-in-canvas (drawElementImage) detected — pinning to 1 worker (Chrome concurrency limitation).",
+      { requestedWorkers },
+    );
     return 1;
   }
 

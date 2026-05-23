@@ -426,6 +426,7 @@ describe("detectRenderModeHints", () => {
     const result = detectRenderModeHints(html);
 
     expect(result.reasons.map((reason) => reason.code)).toContain("htmlInCanvas");
+    expect(result.recommendScreenshot).toBe(true);
   });
 
   it("does not flag htmlInCanvas for plain canvas elements without layoutsubtree", () => {
