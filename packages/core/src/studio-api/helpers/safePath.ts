@@ -1,11 +1,10 @@
-import { resolve, sep, join } from "node:path";
+import { join } from "node:path";
 import { readdirSync } from "node:fs";
 
-/** Reject paths that escape the project directory. */
-export function isSafePath(base: string, resolved: string): boolean {
-  const norm = resolve(base) + sep;
-  return resolved.startsWith(norm) || resolved === resolve(base);
-}
+// `isSafePath` lives at the package root so non-studio-api layers (compiler,
+// CLI, engine) can share it without a backwards dependency on studio-api.
+// Re-exported here for back-compat with existing `../helpers/safePath.js` imports.
+export { isSafePath } from "../../safePath.js";
 
 const IGNORE_DIRS = new Set([".thumbnails", ".hyperframes", "node_modules", ".git"]);
 
