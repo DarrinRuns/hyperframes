@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseMutable } from "./model.js";
+import { parseMutable, getElementStyles, setElementStyles } from "./model.js";
 import { applyOp, validateOp } from "./mutate.js";
 import { applyPatchesToDocument } from "./apply-patches.js";
 import { pathToKey } from "./patches.js";
@@ -105,6 +105,42 @@ describe("setStyle", () => {
   it("override-set key maps correctly", () => {
     const key = pathToKey("/elements/hf-title/inlineStyles/fontSize");
     expect(key).toBe("hf-title.style.fontSize");
+  });
+
+  // Regression: a HYPHENATED (kebab) style key must derive its inverse against
+  // the camelCase-keyed store, or oldValue is null → undo deletes the prior
+  // value instead of restoring it, and a removal skips the inverse entirely.
+  it("derives correct inverse for a kebab style key (change)", () => {
+    const parsed = fresh();
+    const result = applyOp(parsed, {
+      type: "setStyle",
+      target: "hf-title",
+      styles: { "font-size": "96px" },
+    });
+    // inverse restores the prior 64px (replace), not a remove
+    expect(result.inverse[0]).toEqual({
+      op: "replace",
+      path: "/elements/hf-title/inlineStyles/fontSize",
+      value: "64px",
+    });
+  });
+
+  it("emits the inverse for a kebab style removal (no DOM/patch desync)", () => {
+    const parsed = fresh();
+    const result = applyOp(parsed, {
+      type: "setStyle",
+      target: "hf-title",
+      styles: { "font-size": null },
+    });
+    // removal must be recorded (forward remove + inverse add restoring 64px)
+    expect(result.forward[0]?.op).toBe("remove");
+    expect(result.inverse[0]).toEqual({
+      op: "add",
+      path: "/elements/hf-title/inlineStyles/fontSize",
+      value: "64px",
+    });
+    const el = parsed.document.querySelector('[data-hf-id="hf-title"]');
+    expect(el?.getAttribute("style") ?? "").not.toContain("font-size");
   });
 });
 
@@ -283,6 +319,50 @@ describe("removeElement", () => {
     expect(restored?.parentElement?.getAttribute("data-hf-id")).toBe("hf-sub");
     expect(restored?.getAttribute("style")).toBe("opacity: 0.5");
     expect(restored?.textContent).toBe("sub text");
+  });
+});
+
+// ─── setElementStyles (model helper) ──────────────────────────────────────────
+
+describe("setElementStyles key normalization", () => {
+  function elWith(style: string): Element {
+    const parsed = parseMutable(`<div data-hf-id="hf-x" data-hf-root style="${style}"></div>`);
+    const el = parsed.document.querySelector('[data-hf-id="hf-x"]');
+    if (!el) throw new Error("fixture element missing");
+    return el;
+  }
+
+  it("removes a hyphenated property when value is null", () => {
+    const el = elWith("transform-origin: center center; opacity: 0.5");
+    setElementStyles(el, { "transform-origin": null });
+    const styles = getElementStyles(el);
+    expect(styles.transformOrigin).toBeUndefined();
+    expect(el.getAttribute("style")).not.toContain("transform-origin");
+    // sibling prop untouched
+    expect(styles.opacity).toBe("0.5");
+  });
+
+  it("removes a CSS custom property when value is null", () => {
+    const el = elWith("--brand-color: #f00; opacity: 0.5");
+    setElementStyles(el, { "--brand-color": null });
+    const styles = getElementStyles(el);
+    expect(styles["--brand-color"]).toBeUndefined();
+    expect(el.getAttribute("style")).not.toContain("--brand-color");
+    expect(styles.opacity).toBe("0.5");
+  });
+
+  it("sets a camelCase property and keeps existing props", () => {
+    const el = elWith("color: #fff");
+    setElementStyles(el, { fontSize: "96px" });
+    const styles = getElementStyles(el);
+    expect(styles.fontSize).toBe("96px");
+    expect(styles.color).toBe("#fff");
+  });
+
+  it("sets a hyphenated property under its camelCase key", () => {
+    const el = elWith("");
+    setElementStyles(el, { "transform-origin": "top left" });
+    expect(getElementStyles(el).transformOrigin).toBe("top left");
   });
 });
 

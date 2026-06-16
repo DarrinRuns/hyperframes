@@ -1,6 +1,6 @@
 {
   "name": "@hyperframes/sdk",
-  "version": "0.6.99",
+  "version": "0.6.107",
   "description": "Headless, framework-neutral HyperFrames composition editing engine",
   "repository": {
     "type": "git",
@@ -29,6 +29,10 @@
     "./adapters/headless": {
       "import": "./src/adapters/headless.ts",
       "types": "./src/adapters/headless.ts"
+    },
+    "./adapters/http": {
+      "import": "./src/adapters/http.ts",
+      "types": "./src/adapters/http.ts"
     }
   },
   "publishConfig": {
@@ -49,6 +53,10 @@
       "./adapters/headless": {
         "import": "./dist/adapters/headless.js",
         "types": "./dist/adapters/headless.d.ts"
+      },
+      "./adapters/http": {
+        "import": "./dist/adapters/http.js",
+        "types": "./dist/adapters/http.d.ts"
       }
     },
     "main": "./dist/index.js",

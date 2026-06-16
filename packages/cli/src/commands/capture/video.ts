@@ -1,21 +1,7 @@
-import { defineCommand } from "citty";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { c } from "../../ui/colors.js";
 import { safeFetch } from "../../capture/assetDownloader.js";
-import type { Example } from "../_examples.js";
-
-export const examples: Example[] = [
-  [
-    "Download the hero video (index 0) from a captured project's manifest",
-    "capture video ./my-project --index 0",
-  ],
-  [
-    "Download a specific video by exact URL",
-    "capture video ./my-project --url https://cdn.example.com/hero.mp4",
-  ],
-  ["List entries in the manifest without downloading", "capture video ./my-project --list"],
-];
 
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
 const VIDEO_CONTENT_TYPE_RE = /^(video\/|application\/(mp4|octet-stream|x-mpegurl))/i;
@@ -185,127 +171,108 @@ export function pickManifestEntry(
   };
 }
 
-export default defineCommand({
-  meta: {
-    name: "video",
-    description:
-      "Download a video referenced in capture/extracted/video-manifest.json (on-demand; the capture pipeline only writes the manifest + preview PNGs)",
-  },
-  args: {
-    project: {
-      type: "positional",
-      description: "Path to the captured project directory",
-      required: true,
-    },
-    index: {
-      type: "string",
-      description: "Manifest entry index to download (0-based)",
-    },
-    url: {
-      type: "string",
-      description: "Exact video URL to download (must match a manifest entry)",
-    },
-    list: {
-      type: "boolean",
-      description: "List manifest entries (index, dimensions, heading) and exit",
-    },
-  },
-  // fallow-ignore-next-line complexity
-  async run({ args }) {
-    const projectDir = resolve(String(args.project));
-    // standalone capture writes `<dir>/extracted/…`; W2H project nests under `<dir>/capture/extracted/…`.
-    const directPath = join(projectDir, "extracted", "video-manifest.json");
-    const w2hPath = join(projectDir, "capture", "extracted", "video-manifest.json");
-    const manifestPath = existsSync(directPath) ? directPath : w2hPath;
-    const isW2hLayout = manifestPath === w2hPath;
-    if (!existsSync(manifestPath)) {
-      console.error(
-        `${c.error("✗")} no video-manifest.json at ${directPath} or ${w2hPath}\n` +
-          `  Was this directory produced by \`hyperframes capture\`?`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-    let manifest: ManifestEntry[];
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    } catch (e) {
-      console.error(`${c.error("✗")} video-manifest.json is malformed: ${(e as Error).message}`);
-      process.exitCode = 1;
-      return;
-    }
+export interface VideoModeArgs {
+  project: string;
+  index?: string | null;
+  url?: string | null;
+  list?: boolean;
+}
 
-    if (args.list) {
-      if (manifest.length === 0) {
-        console.log(c.dim("(manifest is empty — no <video> elements on the captured page)"));
-        return;
-      }
-      console.log(
-        `${manifest.length} video entr${manifest.length === 1 ? "y" : "ies"} in ${manifestPath}:`,
-      );
-      for (const e of manifest) {
-        console.log(
-          `  ${c.bold(`[${e.index}]`)} ${e.filename} — ${e.width}×${e.height}` +
-            (e.heading ? `\n      heading: "${e.heading}"` : "") +
-            `\n      url: ${e.url}`,
-        );
-      }
-      return;
-    }
-
-    const pick = pickManifestEntry(manifest, args);
-    if (!pick.ok) {
-      console.error(
-        `${c.error("✗")} ${pick.message}` +
-          (pick.code === "no-match-url" ? `\n  Run with --list to see what's available.` : ""),
-      );
-      process.exitCode = 1;
-      return;
-    }
-    const entry = pick.entry;
-
-    const collisions = findFilenameCollision(manifest, entry);
-    if (collisions.length > 0) {
-      console.error(
-        `${c.error("✗")} filename "${safeFilename(entry.filename || basename(entry.url))}" ` +
-          `collides with manifest entr${collisions.length === 1 ? "y" : "ies"} ` +
-          `${collisions.map((co) => `[${co.index}]`).join(", ")}. ` +
-          `Refusing to download — the on-disk file's bytes would not match the requested entry.`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-
-    const outDir = isW2hLayout
-      ? join(projectDir, "capture", "assets", "videos")
-      : join(projectDir, "assets", "videos");
-    mkdirSync(outDir, { recursive: true });
-    const fname = safeFilename(entry.filename || basename(entry.url));
-    const outPath = join(outDir, fname);
-    const relPath = isW2hLayout ? `capture/assets/videos/${fname}` : `assets/videos/${fname}`;
-
-    console.log(
-      `${c.accent("▸")} downloading [${entry.index}] ${entry.filename} (${entry.width}×${entry.height})`,
+// fallow-ignore-next-line complexity
+export async function runVideoMode(args: VideoModeArgs): Promise<void> {
+  const projectDir = resolve(args.project);
+  // standalone capture writes `<dir>/extracted/…`; W2H project nests under `<dir>/capture/extracted/…`.
+  const directPath = join(projectDir, "extracted", "video-manifest.json");
+  const w2hPath = join(projectDir, "capture", "extracted", "video-manifest.json");
+  const manifestPath = existsSync(directPath) ? directPath : w2hPath;
+  const isW2hLayout = manifestPath === w2hPath;
+  if (!existsSync(manifestPath)) {
+    console.error(
+      `${c.error("✗")} no video-manifest.json at ${directPath} or ${w2hPath}\n` +
+        `  Was this directory produced by \`hyperframes capture\`?`,
     );
-    console.log(`     from: ${entry.url}`);
-    try {
-      const bytes = await streamToFile(entry.url, outPath);
-      const sizeKb = Math.round(bytes / 1024);
-      const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)}MB` : `${sizeKb}KB`;
-      console.log(`${c.success("◇")}  wrote ${relPath} (${sizeStr})`);
-      const snippetId = `video-${entry.index}`;
-      console.log(
-        `     Reference it from a beat composition as:\n` +
-          `       <video id="${snippetId}" src="${relPath}" data-start="0" data-duration="${entry.width === entry.height ? 5 : 4}" data-track-index="0" autoplay muted loop></video>`,
-      );
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EEXIST") {
-        console.log(`${c.warn("⚠")}  already downloaded: ${relPath} (skipping)`);
-        console.log(`     Delete the file and re-run to refetch.`);
-        return;
-      }
-      console.error(`${c.error("✗")} download failed: ${(e as Error).message}`);
-      process.exitCode = 1;
+    process.exitCode = 1;
+    return;
+  }
+  let manifest: ManifestEntry[];
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  } catch (e) {
+    console.error(`${c.error("✗")} video-manifest.json is malformed: ${(e as Error).message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (args.list) {
+    if (manifest.length === 0) {
+      console.log(c.dim("(manifest is empty — no <video> elements on the captured page)"));
+      return;
     }
-  },
-});
+    console.log(
+      `${manifest.length} video entr${manifest.length === 1 ? "y" : "ies"} in ${manifestPath}:`,
+    );
+    for (const e of manifest) {
+      console.log(
+        `  ${c.bold(`[${e.index}]`)} ${e.filename} — ${e.width}×${e.height}` +
+          (e.heading ? `\n      heading: "${e.heading}"` : "") +
+          `\n      url: ${e.url}`,
+      );
+    }
+    return;
+  }
+
+  const pick = pickManifestEntry(manifest, args);
+  if (!pick.ok) {
+    console.error(
+      `${c.error("✗")} ${pick.message}` +
+        (pick.code === "no-match-url" ? `\n  Run with --list to see what's available.` : ""),
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const entry = pick.entry;
+
+  const collisions = findFilenameCollision(manifest, entry);
+  if (collisions.length > 0) {
+    console.error(
+      `${c.error("✗")} filename "${safeFilename(entry.filename || basename(entry.url))}" ` +
+        `collides with manifest entr${collisions.length === 1 ? "y" : "ies"} ` +
+        `${collisions.map((co) => `[${co.index}]`).join(", ")}. ` +
+        `Refusing to download — the on-disk file's bytes would not match the requested entry.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const outDir = isW2hLayout
+    ? join(projectDir, "capture", "assets", "videos")
+    : join(projectDir, "assets", "videos");
+  mkdirSync(outDir, { recursive: true });
+  const fname = safeFilename(entry.filename || basename(entry.url));
+  const outPath = join(outDir, fname);
+  const relPath = isW2hLayout ? `capture/assets/videos/${fname}` : `assets/videos/${fname}`;
+
+  console.log(
+    `${c.accent("▸")} downloading [${entry.index}] ${entry.filename} (${entry.width}×${entry.height})`,
+  );
+  console.log(`     from: ${entry.url}`);
+  try {
+    const bytes = await streamToFile(entry.url, outPath);
+    const sizeKb = Math.round(bytes / 1024);
+    const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)}MB` : `${sizeKb}KB`;
+    console.log(`${c.success("◇")}  wrote ${relPath} (${sizeStr})`);
+    const snippetId = `video-${entry.index}`;
+    console.log(
+      `     Reference it from a beat composition as:\n` +
+        `       <video id="${snippetId}" src="${relPath}" data-start="0" data-duration="${entry.width === entry.height ? 5 : 4}" data-track-index="0" autoplay muted loop></video>`,
+    );
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+      console.log(`${c.warn("⚠")}  already downloaded: ${relPath} (skipping)`);
+      console.log(`     Delete the file and re-run to refetch.`);
+      return;
+    }
+    console.error(`${c.error("✗")} download failed: ${(e as Error).message}`);
+    process.exitCode = 1;
+  }
+}

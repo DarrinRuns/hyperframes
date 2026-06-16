@@ -13,6 +13,8 @@ import { usePreviewPersistence } from "./hooks/usePreviewPersistence";
 import { useTimelineEditing } from "./hooks/useTimelineEditing";
 import type { BlockPreviewInfo } from "./components/sidebar/BlocksTab";
 import { useDomEditSession } from "./hooks/useDomEditSession";
+import { useSdkSession } from "./hooks/useSdkSession";
+import { useSdkSelectionSync } from "./hooks/useSdkSelectionSync";
 import { useBlockHandlers } from "./hooks/useBlockHandlers";
 import { useAppHotkeys } from "./hooks/useAppHotkeys";
 import { useClipboard } from "./hooks/useClipboard";
@@ -173,6 +175,7 @@ export function StudioApp() {
     reloadPreview: () => setRefreshKey((k) => k + 1),
     pendingTimelineEditPathRef,
   });
+  const sdkSession = useSdkSession(projectId, activeCompPath ?? "index.html");
   const timelineEditing = useTimelineEditing({
     projectId,
     activeCompPath,
@@ -186,6 +189,7 @@ export function StudioApp() {
     pendingTimelineEditPathRef,
     uploadProjectFiles: fileManager.uploadProjectFiles,
     isRecordingRef: isGestureRecordingRef,
+    sdkSession,
   });
   const {
     activeBlockParams,
@@ -299,6 +303,7 @@ export function StudioApp() {
     openSourceForSelection: fileManager.openSourceForSelection,
     selectSidebarTab: selectSidebarTabStable,
     getSidebarTab: getSidebarTabStable,
+    sdkSession,
   });
   domEditSelectionBridgeRef.current = domEditSession.domEditSelection;
   clearDomSelectionRef.current = domEditSession.clearDomSelection;
@@ -314,6 +319,12 @@ export function StudioApp() {
       domEditSession.handleGsapRemoveKeyframe(a.id, p);
     }
   };
+  useSdkSelectionSync(
+    sdkSession,
+    domEditSession.domEditSelection,
+    domEditSession.domEditGroupSelections,
+  );
+
   useCaptionDetection({
     projectId,
     activeCompPath,
@@ -419,17 +430,6 @@ export function StudioApp() {
     applyDomSelection: domEditSession.applyDomSelection,
     initialState: initialUrlStateRef.current,
   });
-  const { jobs, isRendering, deleteRender, clearCompleted, startRender } = renderQueue;
-  const stableRenderQueue = useMemo(
-    () => ({
-      jobs,
-      isRendering,
-      deleteRender,
-      clearCompleted,
-      startRender: startRender as (options: unknown) => Promise<void>,
-    }),
-    [jobs, isRendering, deleteRender, clearCompleted, startRender],
-  );
   const studioCtxValue = buildStudioContextValue({
     projectId: projectId!,
     activeCompPath,
@@ -445,7 +445,7 @@ export function StudioApp() {
     editHistory,
     handleUndo: appHotkeys.handleUndo,
     handleRedo: appHotkeys.handleRedo,
-    renderQueue: stableRenderQueue,
+    renderQueue,
     compositionDimensions,
     waitForPendingDomEditSaves: previewPersistence.waitForPendingDomEditSaves,
     handlePreviewIframeRef,
@@ -485,7 +485,7 @@ export function StudioApp() {
                   refreshCaptureFrameTime={frameCapture.refreshCaptureFrameTime}
                   inspectorButtonActive={inspectorButtonActive}
                   inspectorPanelActive={inspectorPanelActive}
-                  onExport={() => void renderQueue.startRender()}
+                  onExport={() => void renderQueue.startRender(undefined)}
                 />
                 {previewPersistence.domEditSaveQueuePaused && (
                   <SaveQueuePausedBanner

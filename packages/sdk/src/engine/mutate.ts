@@ -14,6 +14,7 @@ import {
   findRoot,
   getElementStyles,
   setElementStyles,
+  toCamel,
   getOwnText,
   setOwnText,
   getSiblingIndex,
@@ -199,8 +200,14 @@ function handleSetStyle(
     const old = getElementStyles(el);
     setElementStyles(el, styles);
     for (const [prop, value] of Object.entries(styles)) {
-      const path = stylePath(id, prop);
-      const oldValue = old[prop] ?? null;
+      // Normalize to the camelCase key the style map + patch grammar use. A
+      // hyphenated op key ("transform-origin") otherwise misses the camelCase
+      // store, so oldValue is always null → undo deletes/loses the prior value,
+      // a removal skips its inverse patch entirely (DOM/patch-log desync), and
+      // the patch path/override-set key diverge from the camelCase grammar.
+      const key = toCamel(prop);
+      const path = stylePath(id, key);
+      const oldValue = old[key] ?? null;
       if (value !== null) {
         const p = scalarChange(path, oldValue, value);
         result.forward.push(p.forward);

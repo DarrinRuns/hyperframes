@@ -1,4 +1,11 @@
+// Pre-existing-complex timeline hook (DOM patch + GSAP position shift/scale +
+// playback-start resolution); this PR adds guarded shadow-timing dispatches in
+// the move/resize .then() chains, which nudges several callbacks over the CC
+// threshold. The added branches are telemetry-only.
+// fallow-ignore-file complexity
 import { useCallback, useRef } from "react";
+import type { Composition } from "@hyperframes/sdk";
+import { runShadowDelete, runShadowTiming } from "../utils/sdkShadow";
 import type { TimelineElement } from "../player";
 import { usePlayerStore } from "../player";
 import { useRazorSplit } from "./useRazorSplit";
@@ -33,7 +40,7 @@ import type { PersistTimelineEditInput } from "./timelineEditingHelpers";
 
 // ── Types ──
 
-export interface RecordEditInput {
+interface RecordEditInput {
   label: string;
   kind: EditHistoryKind;
   coalesceKey?: string;
@@ -53,6 +60,8 @@ interface UseTimelineEditingOptions {
   pendingTimelineEditPathRef: React.MutableRefObject<Set<string>>;
   uploadProjectFiles: (files: Iterable<File>, dir?: string) => Promise<string[]>;
   isRecordingRef?: React.RefObject<boolean>;
+  /** Stage 7 Step 3b: SDK session for shadow timing dispatch (server stays authoritative). */
+  sdkSession?: Composition | null;
 }
 
 // ── Hook ──
@@ -70,6 +79,7 @@ export function useTimelineEditing({
   pendingTimelineEditPathRef,
   uploadProjectFiles,
   isRecordingRef,
+  sdkSession,
 }: UseTimelineEditingOptions) {
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
@@ -138,6 +148,11 @@ export function useTimelineEditing({
           value: String(updates.track),
         });
       }).then(() => {
+        if (sdkSession)
+          runShadowTiming(sdkSession, element.hfId, {
+            start: updates.start,
+            trackIndex: updates.track,
+          });
         const pid = projectIdRef.current;
         if (delta !== 0 && element.domId && pid) {
           return shiftGsapPositions(pid, filePath, element.domId, delta)
@@ -146,7 +161,7 @@ export function useTimelineEditing({
         }
       });
     },
-    [previewIframeRef, enqueueEdit, activeCompPath, reloadPreview],
+    [previewIframeRef, enqueueEdit, activeCompPath, reloadPreview, sdkSession],
   );
 
   const handleTimelineElementResize = useCallback(
@@ -190,6 +205,11 @@ export function useTimelineEditing({
         }
         return patched;
       }).then(() => {
+        if (sdkSession)
+          runShadowTiming(sdkSession, element.hfId, {
+            start: updates.start,
+            duration: updates.duration,
+          });
         const pid = projectIdRef.current;
         if (timingChanged && element.domId && pid) {
           return scaleGsapPositions(
@@ -207,7 +227,7 @@ export function useTimelineEditing({
         return reloadPreview();
       });
     },
-    [previewIframeRef, enqueueEdit, activeCompPath, reloadPreview],
+    [previewIframeRef, enqueueEdit, activeCompPath, reloadPreview, sdkSession],
   );
 
   const handleTimelineElementDelete = useCallback(
@@ -268,6 +288,7 @@ export function useTimelineEditing({
           );
         usePlayerStore.getState().setSelectedElementId(null);
         reloadPreview();
+        if (sdkSession) runShadowDelete(sdkSession, element.hfId);
         showToast(`Deleted ${label}. Use Undo to restore it.`, "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to delete timeline clip";
@@ -283,6 +304,7 @@ export function useTimelineEditing({
       domEditSaveTimestampRef,
       reloadPreview,
       isRecordingRef,
+      sdkSession,
     ],
   );
 

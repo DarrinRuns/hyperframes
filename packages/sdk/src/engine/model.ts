@@ -29,9 +29,12 @@ export function parseMutable(html: string): ParsedDocument {
 // ─── Element lookup ───────────────────────────────────────────────────────────
 
 export function findById(document: Document, id: string): Element | null {
-  // CSS.escape is browser-only; hf-ids are restricted identifiers so simple quote-escaping is safe.
-  const escaped = id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  return document.querySelector(`[data-hf-id="${escaped}"]`);
+  // Delegate to resolveScoped so patch replay (undo/redo, override-set apply)
+  // resolves an id the SAME way forward dispatch does: canonical-first for an
+  // ambiguous bare id, and scoped-path ("hf-host/hf-leaf") aware. Otherwise the
+  // two paths disagree on which duplicate a bare id targets and undo reverts the
+  // wrong element. (function declaration is hoisted.)
+  return resolveScoped(document, id);
 }
 
 function escapeHfId(id: string): string {
@@ -39,15 +42,44 @@ function escapeHfId(id: string): string {
 }
 
 /**
+ * True when an element lives at the top-level (canonical) scope — i.e. its
+ * scopedId equals its bare id because no ancestor opens a sub-composition
+ * boundary. This mirrors document.ts's scopedId construction (childPrefix only
+ * changes at isNewHostBoundary elements) without rebuilding the snapshot tree.
+ */
+function isCanonicalScope(el: Element): boolean {
+  for (let cur = el.parentElement; cur; cur = cur.parentElement) {
+    if (isNewHostBoundary(cur)) return false;
+  }
+  return true;
+}
+
+/**
  * Resolve a bare or scoped hf-id to its DOM element.
  *
- * Bare id ("hf-x"): equivalent to findById — top-level document search.
+ * Bare id ("hf-x"): top-level document search. When the bare id is ambiguous
+ * (duplicated across a sub-composition and the top level), prefer the canonical
+ * (top-level) instance — the one whose scopedId equals the bare id — falling
+ * back to document order when no canonical match exists. This matches
+ * getElement()'s resolution rule so removeElement / getElement agree on which
+ * instance an ambiguous bare id targets.
+ *
  * Scoped id ("hf-HOST/hf-LEAF", any depth): each segment narrows the search
  * into the subtree of the previous match. This unambiguously addresses an
  * element inside a sub-composition even when bare ids collide.
  */
 export function resolveScoped(document: Document, id: string): Element | null {
   const parts = id.split("/");
+
+  // Bare id: prefer the canonical (top-level) match when one exists, so
+  // resolution agrees with getElement (scopedId === id wins over document order).
+  if (parts.length === 1) {
+    const escaped = escapeHfId(id);
+    const matches = Array.from(document.querySelectorAll(`[data-hf-id="${escaped}"]`));
+    if (matches.length === 0) return null;
+    return matches.find((el) => isCanonicalScope(el)) ?? matches[0] ?? null;
+  }
+
   let context: Element | Document = document;
   for (const part of parts) {
     const escaped = escapeHfId(part);
@@ -88,7 +120,7 @@ export function findRoot(document: Document): Element | null {
 
 // ─── Inline style helpers ─────────────────────────────────────────────────────
 
-function toCamel(prop: string): string {
+export function toCamel(prop: string): string {
   if (prop.startsWith("--")) return prop;
   return prop.replace(/-([a-z])/g, (_, c: string) => (c as string).toUpperCase());
 }
@@ -127,10 +159,13 @@ export function getElementStyles(el: Element): Record<string, string> {
 export function setElementStyles(el: Element, updates: Record<string, string | null>): void {
   const current = getElementStyles(el);
   for (const [prop, value] of Object.entries(updates)) {
+    // Stored map is keyed camelCase (parseStyleAttr); custom props (--foo) stay
+    // verbatim. Normalize the incoming key the same way for both set and delete.
+    const key = toCamel(prop);
     if (value === null) {
-      delete current[prop];
+      delete current[key];
     } else {
-      current[prop] = value;
+      current[key] = value;
     }
   }
   const serialized = serializeStyleAttr(current);

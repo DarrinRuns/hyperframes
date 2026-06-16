@@ -39,6 +39,8 @@ import type { PersistQueueModule } from "./persist-queue.js";
 
 export interface OpenCompositionOptions {
   persist?: PersistAdapter;
+  /** Adapter path the persist queue writes to. Default: "composition.html". Immutable for the session lifetime. */
+  persistPath?: string;
   preview?: PreviewAdapter;
   /** T3 embedded mode: override-set applied on top of the base template. */
   overrides?: OverrideSet;
@@ -222,6 +224,17 @@ class CompositionImpl implements Composition {
 
   getSelection(): string[] {
     return [...this.currentSelection];
+  }
+
+  setSelection(ids: string[]): void {
+    const deduped = Array.from(new Set(ids));
+    if (
+      deduped.length === this.currentSelection.length &&
+      deduped.every((id, i) => id === this.currentSelection[i])
+    ) {
+      return;
+    }
+    this.updateSelection(deduped);
   }
 
   private updateSelection(ids: readonly string[]): void {
@@ -491,6 +504,7 @@ export async function openComposition(
 
     if (opts?.persist) {
       const pq = createPersistQueue(session, opts.persist, {
+        path: opts.persistPath,
         onError: (e) => session._fireError(e),
       });
       session.attachPersistQueue(pq);
