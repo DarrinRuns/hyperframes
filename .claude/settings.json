@@ -13,5 +13,45 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm run type-check)",
+      "Bash(npm run lint)",
+      "Bash(npm run check)",
+      "Bash(npx hyperframes lint)",
+      "Bash(npx hyperframes lint *)",
+      "Bash(npx hyperframes validate)",
+      "Bash(npx hyperframes validate *)",
+      "Bash(npx hyperframes preview)",
+      "Bash(npx hyperframes preview *)",
+      "Bash(npx hyperframes snapshot *)",
+      "Bash(npx hyperframes inspect *)",
+      "Bash(npx hyperframes info *)",
+      "Bash(npx hyperframes compositions *)",
+      "Bash(bun *)",
+      "Bash(bunx *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(ffmpeg *)",
+      "Bash(ls)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(cat *)",
+      "Bash(echo *)",
+      "Bash(rm *)",
+      "Bash(git status)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "mcp__ahrefs__gsc-keywords",
+      "mcp__ahrefs__site-explorer-organic-keywords",
+      "mcp__ahrefs__gsc-pages",
+      "mcp__ahrefs__doc",
+      "mcp__ahrefs__management-projects"
+    ]
   }
 }

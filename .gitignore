@@ -57,6 +57,17 @@ compositions/**/*.mp4
 compositions/**/*.mov
 compositions/**/*.MOV
 
+# Project audio assets — large binaries, use external storage
+assets/*.mp3
+assets/*.wav
+assets/**/*.mp3
+assets/**/*.wav
+
+# Composition project build directories — work-in-progress, not framework code
+eaisypost/
+sg-monday-events/
+assets/EaisyPost/
+
 # npm pack artifacts
 *.tgz
 
