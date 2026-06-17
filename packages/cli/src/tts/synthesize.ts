@@ -131,6 +131,8 @@ function ensureSynthScript(): string {
 // ---------------------------------------------------------------------------
 
 export interface SynthesizeOptions {
+  /** TTS backend to use. Defaults to "kokoro" (local, no API key needed). */
+  provider?: "kokoro" | "gemini";
   model?: string;
   voice?: string;
   speed?: number;
@@ -138,6 +140,7 @@ export interface SynthesizeOptions {
    * Phonemizer locale. When omitted, inferred from the voice ID prefix
    * (e.g., `ef_dora` → `es`). Pass explicitly to override — for example,
    * reading English text with a French voice as a stylization.
+   * Ignored when provider is "gemini" (language is inferred from text).
    */
   lang?: SupportedLang;
   onProgress?: (message: string) => void;
@@ -152,13 +155,24 @@ export interface SynthesizeResult {
 }
 
 /**
- * Synthesize text to speech using Kokoro-82M via kokoro-onnx.
+ * Synthesize text to speech.
+ * - provider "kokoro" (default): local Kokoro-82M ONNX model, no API key required.
+ * - provider "gemini": Gemini TTS via Google GenAI API, requires GEMINI_API_KEY.
  */
 export async function synthesize(
   text: string,
   outputPath: string,
   options?: SynthesizeOptions,
 ): Promise<SynthesizeResult> {
+  if (options?.provider === "gemini") {
+    const { synthesizeGemini } = await import("./synthesize-gemini.js");
+    return synthesizeGemini(text, outputPath, {
+      voice: options.voice,
+      model: options.model,
+      onProgress: options.onProgress,
+    });
+  }
+
   const voice = options?.voice ?? DEFAULT_VOICE;
   const speed = options?.speed ?? 1.0;
   const lang: SupportedLang = options?.lang ?? inferLangFromVoiceId(voice);

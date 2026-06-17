@@ -17,6 +17,12 @@ export const examples: Example[] = [
   ],
   ["Read text from a file", "hyperframes tts script.txt"],
   ["List available voices", "hyperframes tts --list"],
+  ["Use Gemini TTS (requires GEMINI_API_KEY)", 'hyperframes tts "Hello" --provider gemini'],
+  [
+    "Gemini with a specific voice",
+    'hyperframes tts "Welcome back" --provider gemini --voice Kore --output intro.wav',
+  ],
+  ["List Gemini voices", "hyperframes tts --list --provider gemini"],
 ];
 import { resolve, extname } from "node:path";
 import * as clack from "@clack/prompts";
@@ -30,14 +36,15 @@ import {
   isSupportedLang,
   type SupportedLang,
 } from "../tts/manager.js";
+import { GEMINI_VOICES, DEFAULT_GEMINI_VOICE } from "../tts/synthesize-gemini.js";
 
-const voiceList = BUNDLED_VOICES.map((v) => `${v.id} (${v.label})`).join(", ");
 const langList = SUPPORTED_LANGS.join(", ");
 
 export default defineCommand({
   meta: {
     name: "tts",
-    description: "Generate speech audio from text using a local AI model (Kokoro-82M)",
+    description:
+      "Generate speech audio from text — local Kokoro-82M (default) or Gemini TTS (--provider gemini)",
   },
   args: {
     input: {
@@ -50,19 +57,24 @@ export default defineCommand({
       description: "Output file path (default: speech.wav in current directory)",
       alias: "o",
     },
+    provider: {
+      type: "string",
+      description: 'TTS provider: "kokoro" (default, local) or "gemini" (requires GEMINI_API_KEY)',
+      alias: "p",
+    },
     voice: {
       type: "string",
-      description: `Voice ID (default: ${DEFAULT_VOICE}). Options: ${voiceList}`,
+      description: `Voice ID. Kokoro default: ${DEFAULT_VOICE}. Gemini default: ${DEFAULT_GEMINI_VOICE} (also: Kore, Schedar)`,
       alias: "v",
     },
     speed: {
       type: "string",
-      description: "Speech speed multiplier (default: 1.0)",
+      description: "Speech speed multiplier 0.1–3.0 (kokoro only, default: 1.0)",
       alias: "s",
     },
     lang: {
       type: "string",
-      description: `Phonemizer language (auto-detected from voice prefix when omitted). Options: ${langList}`,
+      description: `Phonemizer language — kokoro only, auto-detected from voice prefix. Options: ${langList}`,
       alias: "l",
     },
     list: {
@@ -77,9 +89,16 @@ export default defineCommand({
     },
   },
   async run({ args }) {
+    const provider = (args.provider ?? "kokoro") as "kokoro" | "gemini";
+
+    if (provider !== "kokoro" && provider !== "gemini") {
+      console.error(c.error(`Unknown provider "${provider}". Use "kokoro" or "gemini".`));
+      process.exit(1);
+    }
+
     // ── List voices mode ──────────────────────────────────────────────
     if (args.list) {
-      return listVoices(args.json);
+      return provider === "gemini" ? listGeminiVoices(args.json) : listVoices(args.json);
     }
 
     // ── Resolve input text ────────────────────────────────────────────
@@ -108,45 +127,52 @@ export default defineCommand({
 
     // ── Resolve output path ───────────────────────────────────────────
     const output = resolve(args.output ?? "speech.wav");
-    const voice = args.voice ?? DEFAULT_VOICE;
+    const voice = args.voice ?? (provider === "gemini" ? DEFAULT_GEMINI_VOICE : DEFAULT_VOICE);
     const speed = args.speed ? parseFloat(args.speed) : 1.0;
 
-    if (isNaN(speed) || speed <= 0 || speed > 3) {
+    if (provider === "kokoro" && (isNaN(speed) || speed <= 0 || speed > 3)) {
       console.error(c.error("Speed must be a number between 0.1 and 3.0"));
       process.exit(1);
     }
 
-    const inferredLang = inferLangFromVoiceId(voice);
-    let lang: SupportedLang = inferredLang;
-    if (args.lang != null) {
-      const requested = String(args.lang).toLowerCase();
-      if (!isSupportedLang(requested)) {
-        errorBox("Invalid --lang", `Got "${args.lang}". Must be one of: ${langList}.`);
-        process.exit(1);
+    let lang: SupportedLang | undefined;
+    if (provider === "kokoro") {
+      const inferredLang = inferLangFromVoiceId(voice);
+      lang = inferredLang;
+      if (args.lang != null) {
+        const requested = String(args.lang).toLowerCase();
+        if (!isSupportedLang(requested)) {
+          errorBox("Invalid --lang", `Got "${args.lang}". Must be one of: ${langList}.`);
+          process.exit(1);
+        }
+        lang = requested;
+        if (!args.json && lang !== inferredLang) {
+          console.log(
+            c.dim(
+              `  Note: voice "${voice}" is ${inferredLang}, rendering with --lang ${lang} instead.`,
+            ),
+          );
+        }
       }
-      lang = requested;
-    }
-
-    // Mismatched voice/lang is a valid stylization (English text, French
-    // phonemization for accent), so this is a hint, not an error.
-    if (!args.json && args.lang != null && lang !== inferredLang) {
-      console.log(
-        c.dim(
-          `  Note: voice "${voice}" is ${inferredLang}, rendering with --lang ${lang} instead.`,
-        ),
-      );
+    } else if (args.lang != null) {
+      console.log(c.dim("  Note: --lang is not used with the Gemini provider."));
     }
 
     // ── Synthesize ────────────────────────────────────────────────────
     const { synthesize } = await import("../tts/synthesize.js");
     const spin = args.json ? null : clack.spinner();
-    spin?.start(`Generating speech with ${c.accent(voice)} (${lang})...`);
+    const spinLabel =
+      provider === "gemini"
+        ? `Generating speech with Gemini ${c.accent(voice)}...`
+        : `Generating speech with ${c.accent(voice)} (${lang})...`;
+    spin?.start(spinLabel);
 
     try {
       const result = await synthesize(text, output, {
+        provider,
         voice,
-        speed,
-        lang,
+        speed: provider === "kokoro" ? speed : undefined,
+        lang: provider === "kokoro" ? lang : undefined,
         onProgress: spin ? (msg) => spin.message(msg) : undefined,
       });
 
@@ -154,10 +180,9 @@ export default defineCommand({
         console.log(
           JSON.stringify({
             ok: true,
+            provider,
             voice,
-            speed,
-            lang,
-            langApplied: result.langApplied,
+            ...(provider === "kokoro" ? { speed, lang, langApplied: result.langApplied } : {}),
             durationSeconds: result.durationSeconds,
             outputPath: result.outputPath,
           }),
@@ -168,7 +193,7 @@ export default defineCommand({
             `Generated ${c.accent(result.durationSeconds.toFixed(1) + "s")} of speech → ${c.accent(result.outputPath)}`,
           ),
         );
-        if (args.lang != null && !result.langApplied) {
+        if (provider === "kokoro" && args.lang != null && !result.langApplied) {
           console.log(
             c.dim(
               "  Note: installed kokoro-onnx version does not support the --lang kwarg; phonemization used Kokoro's default.",
@@ -178,6 +203,7 @@ export default defineCommand({
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // fallow-ignore-next-line code-duplication
       if (args.json) {
         console.log(JSON.stringify({ ok: false, error: message }));
       } else {
@@ -217,5 +243,29 @@ function listVoices(json: boolean): void {
   );
   console.log(
     `  ${c.dim("Override phonemizer with --lang <" + SUPPORTED_LANGS.join("|") + ">")}\n`,
+  );
+}
+
+// fallow-ignore-next-line complexity
+function listGeminiVoices(json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(GEMINI_VOICES));
+    return;
+  }
+
+  console.log(`\n${c.bold("Available voices")} (Gemini TTS)\n`);
+  console.log(`  ${c.dim("Voice")}          ${c.dim("Style")}           ${c.dim("Gender")}`);
+  console.log(`  ${c.dim("─".repeat(48))}`);
+  for (const v of GEMINI_VOICES) {
+    const isPreferred = v.id === "Charon" || v.id === "Kore" || v.id === "Schedar";
+    const name = v.id.padEnd(14);
+    const style = v.style.padEnd(16);
+    const line = `  ${c.accent(name)} ${style} ${v.gender}`;
+    console.log(isPreferred ? `${line}  ${c.dim("★")}` : line);
+  }
+  console.log(
+    `\n  ${c.dim("★ = preferred voices (Charon, Kore, Schedar)")}\n` +
+      `  ${c.dim("Default voice: Charon")}\n` +
+      `  ${c.dim("Requires GEMINI_API_KEY — https://aistudio.google.com/apikey")}\n`,
   );
 }
